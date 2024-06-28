@@ -8,10 +8,45 @@ import asyncio
 from base64 import b64encode
 from pathlib import Path
 import os
+import datetime
+import pytz
 
 import requests
 
 from tutorial_modules import logger
+
+def convertDate(timestamp):
+
+    # Convert the timestamp to a datetime object in UTC
+    utc_time = datetime.datetime.utcfromtimestamp(timestamp).replace(tzinfo=pytz.UTC)
+
+    # Convert the UTC time to Eastern Time (US & Canada)
+    eastern = pytz.timezone('Europe/Zurich')
+    #eastern_time = utc_time.astimezone(eastern)
+
+    # Print the times
+    #print("UTC Time:", utc_time)
+    #print("Zurich Time:", eastern_time)
+
+    # Define the format
+    date_format = "%Y-%m-%d %H:%M:%S"
+
+    # Convert the datetime object to a string using the specified format
+    date_time_str = utc_time.strftime(date_format)
+
+    # Define the date and time in the specified timezone
+    date_time = datetime.datetime.strptime(date_time_str, date_format)
+
+    # Localize the datetime object to the specified timezone
+    localized_date_time = eastern.localize(date_time)
+
+    # Convert the localized datetime to a Unix timestamp
+    timestamp = int(localized_date_time.timestamp())
+
+    # Print the Unix timestamp
+    #print(timestamp)
+
+    return timestamp
 
 def download_file(url):
     local_filename = url.split('/')[-1]
@@ -26,7 +61,18 @@ def download_file(url):
                 f.write(chunk)
     return local_filename
 
+def deleteFile(ip_address,d,f,token,certificate):
+    print(f'can safely remove file {f["n"]}')
+    res = requests.get(
+        f"https://{ip_address}/gopro/media/delete/file?path={d['d']}/{f['n']}",
+        timeout=10,
+        headers={"Authorization": f"Basic {token}"},
+        verify=str(certificate),
+    )
+    print(res)
+
 async def main(ip_address: str, username: str, password: str, certificate: Path) -> None:
+    folder="media/"
     url = f"https://{ip_address}" + "/gopro/media/list"
     logger.debug(f"Sending:  {url}")
 
@@ -46,20 +92,17 @@ async def main(ip_address: str, username: str, password: str, certificate: Path)
     #http://10.5.5.9:8080/videos/DCIM/{directory}/{filename}
     for d in resp["media"]:
         for f in d["fs"]:
+            file_name = folder+f['n']
+            creation_date = (int)(f['cre'])
+            modification_date = (int)(f['mod'])
+            filesize = (int)(f['s'])
             print(f)
-            download = False
-            if os.path.isfile(f["n"]):
-                if (int)(os.path.getsize(f["n"])) == (int)(f['s']):
-                    print(f'can safely remove file {f["n"]}')
-                    res = requests.get(
-                        f"https://{ip_address}/gopro/media/delete/file?path={d['d']}/{f['n']}",
-                        timeout=10,
-                        headers={"Authorization": f"Basic {token}"},
-                        verify=str(certificate),
-                    )
-                    print(res)
-                else:
-                    download = True
+            download = True
+            if os.path.isfile(file_name):
+                if (int)(os.path.getsize(file_name)) == (int)(f['s']):
+                    deleteFile(ip_address,d,f,token,certificate)
+                    download=False
+                
             if download:
                 with requests.get(
                     f"https://{ip_address}/videos/DCIM/{d['d']}/{f['n']}",
@@ -68,13 +111,19 @@ async def main(ip_address: str, username: str, password: str, certificate: Path)
                     verify=str(certificate),
                 ) as r:
                     r.raise_for_status()
-                    with open(f['n'], 'wb') as f:
+                    with open(file_name, 'wb') as f:
                         for chunk in r.iter_content(chunk_size=8192): 
                             # If you have chunk encoded response uncomment if
                             # and set chunk_size parameter to None.
                             #if chunk: 
                             f.write(chunk)
-
+                
+                #print(f'creation date: {datetime.datetime.fromtimestamp(creation_date)} - modification date: {datetime.datetime.fromtimestamp(modification_date)}')
+                #print(f"{file_name}-{creation_date}-{modification_date}")
+                os.utime(file_name, (convertDate(creation_date),convertDate(modification_date)))
+                #if (int)(os.path.getsize(file_name)) == filesize:
+                #    deleteFile(ip_address,d,f,token,certificate)
+                    
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Demonstrate HTTPS communication via COHN.")
